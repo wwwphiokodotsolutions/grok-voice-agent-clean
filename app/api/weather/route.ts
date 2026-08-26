@@ -1,52 +1,81 @@
-import { NextRequest } from 'next/server'
+import { z } from 'zod'
 
-// Lightweight mock + optional free Open-Meteo lookup (no API key required)
-export async function POST(req: NextRequest) {
+const inputSchema = z.object({
+  city: z.string().min(1),
+})
+
+export async function POST(request: Request) {
+  const parsed = inputSchema.safeParse(await request.json().catch(() => null))
+
+  if (!parsed.success) {
+    return Response.json({ error: 'Invalid input' }, { status: 400 })
+  }
+
+  const { city } = parsed.data
+
   try {
-    const body = await req.json()
-    const city = (body.city as string)?.trim() || 'San Francisco'
+    const geoRes = await fetch(
+      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(
+        city,
+      )}&count=1&language=en&format=json`,
+    )
+    const geo = await geoRes.json()
+    const place = geo?.results?.[0]
 
-    // Try free geocoding + weather (Open-Meteo)
-    try {
-      const geoRes = await fetch(
-        `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1`,
-        { next: { revalidate: 3600 } },
-      )
-      const geo = await geoRes.json()
-      if (geo.results?.[0]) {
-        const { latitude, longitude, name, country } = geo.results[0]
-        const weatherRes = await fetch(
-          `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&temperature_unit=fahrenheit`,
-        )
-        const weather = await weatherRes.json()
-        const current = weather.current
-        return Response.json({
-          city: name,
-          country,
-          temperatureF: current.temperature_2m,
-          humidity: current.relative_humidity_2m,
-          windMph: current.wind_speed_10m,
-          code: current.weather_code,
-          summary: `Currently ${Math.round(current.temperature_2m)}°F in ${name}`,
-        })
-      }
-    } catch {
-      // fall through to mock
+    if (!place) {
+      return Response.json({
+        city,
+        error: `Could not find a place called "${city}".`,
+      })
     }
 
-    // Graceful mock fallback
+    const wxRes = await fetch(
+      `https://api.open-meteo.com/v1/forecast?latitude=${place.latitude}&longitude=${place.longitude}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&temperature_unit=fahrenheit&wind_speed_unit=mph`,
+    )
+    const wx = await wxRes.json()
+    const current = wx?.current
+
     return Response.json({
-      city,
-      temperatureF: 72,
-      humidity: 55,
-      windMph: 8,
-      summary: `Mock weather for ${city}: pleasant and mild (≈72°F)`,
-      note: 'Live weather lookup unavailable — using demo data',
+      city: place.name,
+      region: place.admin1 ?? null,
+      country: place.country ?? null,
+      temperatureF: current?.temperature_2m ?? null,
+      humidityPercent: current?.relative_humidity_2m ?? null,
+      windSpeedMph: current?.wind_speed_10m ?? null,
+      condition: weatherCodeToText(current?.weather_code),
     })
-  } catch (err) {
+  } catch {
     return Response.json(
-      { error: err instanceof Error ? err.message : 'Weather request failed' },
-      { status: 500 },
+      { city, error: 'Weather lookup failed.' },
+      { status: 502 },
     )
   }
+}
+
+function weatherCodeToText(code: number | undefined): string {
+  if (code == null) return 'unknown'
+  const map: Record<number, string> = {
+    0: 'clear sky',
+    1: 'mainly clear',
+    2: 'partly cloudy',
+    3: 'overcast',
+    45: 'foggy',
+    48: 'depositing rime fog',
+    51: 'light drizzle',
+    53: 'moderate drizzle',
+    55: 'dense drizzle',
+    61: 'slight rain',
+    63: 'moderate rain',
+    65: 'heavy rain',
+    71: 'slight snow',
+    73: 'moderate snow',
+    75: 'heavy snow',
+    80: 'rain showers',
+    81: 'moderate rain showers',
+    82: 'violent rain showers',
+    95: 'thunderstorm',
+    96: 'thunderstorm with hail',
+    99: 'thunderstorm with heavy hail',
+  }
+  return map[code] ?? 'unknown'
 }

@@ -1,42 +1,30 @@
 # Grok Voice Agent (Clean)
 
-A clean, production-ready realtime voice assistant built with:
+Realtime voice assistant using the **existing xAI Grok Voice routing API**.
 
-- **Next.js 15** + React 19
-- **Vercel AI SDK** (`@ai-sdk/gateway` + `@ai-sdk/react`)
-- **xAI Grok Voice** (`xai/grok-voice-think-fast-1.0`)
-- Server-minted short-lived tokens (API key never reaches the browser)
-- Tool calling (current time + weather)
-- Beautiful dark UI with animated voice orb, live transcript & tool activity panel
+- Model: `grok-voice-latest` via `@ai-sdk/xai`
+- Token route: `POST /api/realtime/setup` → `xai.experimental_realtime.getToken`
+- Browser hook: `experimental_useRealtime` from `@ai-sdk/react`
+- WebSocket: `wss://api.x.ai/v1/realtime?model=grok-voice-latest`
+- Auth: server-only `XAI_API_KEY` minted into a short-lived client secret
 
-## Quick start
+This is the same routing path as the original `grok-voice-agent` project — not AI Gateway.
+
+## Setup
 
 ```bash
-pnpm install   # or npm / yarn
+pnpm install
 cp .env.example .env.local
-# Add your key:
-# AI_GATEWAY_API_KEY=...   (preferred)
-# or XAI_API_KEY=xai-...
+# set XAI_API_KEY=xai-...
 
 pnpm dev
 ```
 
-Open http://localhost:3000 and tap the orb.
+On Vercel, add `XAI_API_KEY` in Project Settings → Environment Variables, then redeploy.
 
-## Deploy to Vercel
+## How routing works
 
-1. Import this repo in the Vercel dashboard (or `vercel` CLI).
-2. Add the environment variable `AI_GATEWAY_API_KEY` (or `XAI_API_KEY`).
-3. Deploy. The production domain will be ready in ~30 s.
-
-## Features
-
-- Full-duplex speech-to-speech with server VAD
-- Mic permission handling with clear error messages
-- `getCurrentTime` and `getWeather` tools (weather uses free Open-Meteo, with graceful mock fallback)
-- Responsive, accessible UI
-
-## Notes
-
-This is a clean rebuild intended to avoid previous build / linking issues.  
-Enjoy talking to Grok!
+1. The browser requests `/api/realtime/setup`.
+2. The server calls `xai.experimental_realtime.getToken({ model: 'grok-voice-latest' })` with your `XAI_API_KEY`.
+3. The client opens a WebSocket to xAI using that ephemeral token.
+4. Audio in/out + tool calls (`getCurrentTime`, `getWeather`) run over that session.
